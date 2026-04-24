@@ -2,9 +2,10 @@
 
 // Command wasm compiles to a single yaegi.wasm binary that attaches a
 // civnodeYaegi object to the Worker's global scope. It exposes three
-// functions: run, runTests, and version. All three take and return plain
-// JavaScript objects — no promises, no callbacks — which keeps the Worker
-// bridge on the CivNode side straightforward.
+// functions: run, runTests, and version. run and runTests return Promises
+// so that the Go scheduler actually gets CPU ticks during execution — a
+// synchronous js.FuncOf would starve Go timers on the same JS microtask,
+// which makes context.WithTimeout never fire for a user's "for {}" loop.
 package main
 
 import (
@@ -21,7 +22,7 @@ var builtAt = "unknown"
 
 func main() {
 	global := js.Global()
-	api := js.ValueOf(map[string]any{})
+	api := js.Global().Get("Object").New()
 	api.Set("run", js.FuncOf(runFunc))
 	api.Set("runTests", js.FuncOf(runTestsFunc))
 	api.Set("version", js.FuncOf(versionFunc))
@@ -36,59 +37,89 @@ func main() {
 	select {}
 }
 
-// runFunc expects (source string, timeoutMs number) and returns a plain
-// object with stdout, stderr, exitCode, and durationMs.
-func runFunc(this js.Value, args []js.Value) any {
+// runFunc expects (source string, timeoutMs number) and returns a Promise
+// that resolves to { stdout, stderr, exitCode, durationMs }.
+func runFunc(_ js.Value, args []js.Value) any {
 	if len(args) < 1 || args[0].Type() != js.TypeString {
-		return errorObject("run: expected (source string, timeoutMs number)")
+		return resolvedPromise(errorObject("run: expected (source string, timeoutMs number)"))
 	}
 	source := args[0].String()
 	timeout := parseTimeout(args, 1)
-	res := yaegibrowser.Run(source, timeout)
-	return map[string]any{
-		"stdout":     res.Stdout,
-		"stderr":     res.Stderr,
-		"exitCode":   res.ExitCode,
-		"durationMs": res.DurationMs,
-	}
+	return newPromise(func() any {
+		res := yaegibrowser.Run(source, timeout)
+		return map[string]any{
+			"stdout":     res.Stdout,
+			"stderr":     res.Stderr,
+			"exitCode":   res.ExitCode,
+			"durationMs": res.DurationMs,
+		}
+	})
 }
 
-// runTestsFunc expects (source string, timeoutMs number) and returns a plain
-// object with stdout, stderr, passed (array of names), failed (array of
-// {name, message}), and durationMs.
-func runTestsFunc(this js.Value, args []js.Value) any {
+// runTestsFunc expects (source string, timeoutMs number) and returns a
+// Promise that resolves to { stdout, stderr, passed: [name],
+// failed: [{name, message}], durationMs }.
+func runTestsFunc(_ js.Value, args []js.Value) any {
 	if len(args) < 1 || args[0].Type() != js.TypeString {
-		return errorObject("runTests: expected (source string, timeoutMs number)")
+		return resolvedPromise(errorObject("runTests: expected (source string, timeoutMs number)"))
 	}
 	source := args[0].String()
 	timeout := parseTimeout(args, 1)
-	res := yaegibrowser.RunTests(source, timeout)
-
-	passed := make([]any, len(res.Passed))
-	for i, name := range res.Passed {
-		passed[i] = name
-	}
-	failed := make([]any, len(res.Failed))
-	for i, f := range res.Failed {
-		failed[i] = map[string]any{"name": f.Name, "message": f.Message}
-	}
-	return map[string]any{
-		"stdout":     res.Stdout,
-		"stderr":     res.Stderr,
-		"passed":     passed,
-		"failed":     failed,
-		"durationMs": res.DurationMs,
-	}
+	return newPromise(func() any {
+		res := yaegibrowser.RunTests(source, timeout)
+		passed := make([]any, len(res.Passed))
+		for i, name := range res.Passed {
+			passed[i] = name
+		}
+		failed := make([]any, len(res.Failed))
+		for i, f := range res.Failed {
+			failed[i] = map[string]any{"name": f.Name, "message": f.Message}
+		}
+		return map[string]any{
+			"stdout":     res.Stdout,
+			"stderr":     res.Stderr,
+			"passed":     passed,
+			"failed":     failed,
+			"durationMs": res.DurationMs,
+		}
+	})
 }
 
 // versionFunc reports linked yaegi and Go versions, plus the build timestamp
-// supplied by the Makefile's release target.
+// supplied by the Makefile's release target. This call is cheap so it does
+// not need a Promise.
 func versionFunc(_ js.Value, _ []js.Value) any {
 	return map[string]any{
 		"yaegiVersion": yaegibrowser.YaegiVersion(),
 		"goVersion":    runtime.Version(),
 		"builtAt":      builtAt,
 	}
+}
+
+// newPromise runs fn on a goroutine and resolves the returned Promise with
+// its result. Errors are not used — the runner already encodes them into
+// the returned result object.
+func newPromise(fn func() any) js.Value {
+	promise := js.Global().Get("Promise")
+	handler := js.FuncOf(func(_ js.Value, params []js.Value) any {
+		if len(params) < 1 {
+			return nil
+		}
+		resolve := params[0]
+		go func() {
+			result := fn()
+			resolve.Invoke(result)
+		}()
+		return nil
+	})
+	return promise.New(handler)
+}
+
+// resolvedPromise returns a Promise that resolves synchronously to v. Used
+// for input validation errors so the API shape stays consistent.
+func resolvedPromise(v any) js.Value {
+	promise := js.Global().Get("Promise")
+	return promise.Call("resolve", v)
 }
 
 // parseTimeout reads args[i] as a JS number of milliseconds and returns a
