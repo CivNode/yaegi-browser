@@ -14,7 +14,8 @@ import (
 	"time"
 
 	"github.com/traefik/yaegi/interp"
-	"github.com/traefik/yaegi/stdlib"
+
+	"github.com/CivNode/yaegi-browser/internal/symbols"
 )
 
 // YaegiVersion reports the version of github.com/traefik/yaegi that was
@@ -147,7 +148,7 @@ func newInterpreter(stdout, stderr *bytes.Buffer) (*interp.Interpreter, error) {
 		Stdout: stdout,
 		Stderr: stderr,
 	})
-	if err := i.Use(stdlib.Symbols); err != nil {
+	if err := i.Use(symbols.Symbols); err != nil {
 		return nil, fmt.Errorf("load stdlib symbols: %w", err)
 	}
 	override := map[string]map[string]reflect.Value{
