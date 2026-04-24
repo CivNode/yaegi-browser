@@ -31,22 +31,26 @@ VERSION        ?= dev
 BUILD_AT       := $(shell date -u +%FT%TZ)
 MAX_WASM_BYTES := 12582912
 
+# Track every Go source file that influences the wasm build so `make wasm`
+# actually rebuilds when they change.
+WASM_SOURCES := $(shell find . -type f -name '*.go' -not -path './dist/*' -not -path './testharness/*')
+
 wasm: dist/yaegi.wasm dist/wasm_exec.js dist/yaegi.manifest.json
 
 dist:
 	mkdir -p dist
 
-dist/yaegi.wasm: dist
+dist/yaegi.wasm: $(WASM_SOURCES) go.mod go.sum | dist
 	GOOS=js GOARCH=wasm go build \
 		-trimpath \
 		-ldflags "-s -w -X main.builtAt=$(BUILD_AT)" \
 		-o dist/yaegi.wasm \
 		./cmd/wasm
 
-dist/wasm_exec.js: dist
+dist/wasm_exec.js: | dist
 	cp "$$(go env GOROOT)/lib/wasm/wasm_exec.js" dist/wasm_exec.js
 
-dist/yaegi.manifest.json: dist/yaegi.wasm
+dist/yaegi.manifest.json: dist/yaegi.wasm | dist
 	@sha=$$(sha256sum dist/yaegi.wasm | awk '{print $$1}'); \
 	size=$$(wc -c < dist/yaegi.wasm); \
 	goV=$$(go version | awk '{print $$3}'); \
