@@ -1,0 +1,18 @@
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+// spin deliberately runs longer than any reasonable timeout. The time.Sleep
+// inside the loop is what lets the Go scheduler preempt yaegi on js/wasm —
+// tight loops without any blocking call are not interruptible by context
+// alone; the host must terminate the Worker. See README "Timeout
+// enforcement" for the full story.
+func main() {
+	for i := 0; i < 100; i++ {
+		time.Sleep(100 * time.Millisecond)
+		fmt.Println("tick", i)
+	}
+}
