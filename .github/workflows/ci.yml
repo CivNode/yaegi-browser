@@ -9,7 +9,8 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        go: ['1.25', '1.26']
+        # Code uses range-over-int (1.26 feature); only test on 1.26+.
+        go: ['1.26']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -27,11 +28,12 @@ jobs:
           go-version: '1.26'
       - run: go install mvdan.cc/gofumpt@latest
       - run: gofumpt -l -d . | tee /tmp/gofumpt-out && test ! -s /tmp/gofumpt-out
-      # golangci-lint v2 is the first version built against Go 1.25+; v1.x
-      # bundles a go1.23 toolchain and refuses to analyse a 1.26 module.
+      # golangci-lint bundles its own Go toolchain and refuses to analyse
+      # modules that target a newer Go version than it was built with.
+      # v2.11.4 (Mar 2026) is built against go1.26 and handles this repo.
       - uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.1.6
+          version: v2.11.4
 
   wasm:
     runs-on: ubuntu-24.04
@@ -58,4 +60,3 @@ jobs:
             dist/yaegi.wasm
             dist/wasm_exec.js
             dist/yaegi.manifest.json
-
