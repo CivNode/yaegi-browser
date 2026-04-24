@@ -27,6 +27,35 @@ jobs:
           go-version: '1.26'
       - run: go install mvdan.cc/gofumpt@latest
       - run: gofumpt -l -d . | tee /tmp/gofumpt-out && test ! -s /tmp/gofumpt-out
+      # golangci-lint v2 is the first version built against Go 1.25+; v1.x
+      # bundles a go1.23 toolchain and refuses to analyse a 1.26 module.
       - uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.4.0
+          version: v2.1.6
+
+  wasm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build wasm
+        run: make wasm
+      - name: Enforce size budget
+        run: make sizecheck
+      - name: Run Node harness
+        run: node testharness/node.mjs
+      - name: Upload artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yaegi-wasm
+          path: |
+            dist/yaegi.wasm
+            dist/wasm_exec.js
+            dist/yaegi.manifest.json
+
