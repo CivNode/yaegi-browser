@@ -11,7 +11,7 @@ func TestRun_HelloWorld(t *testing.T) {
 import "fmt"
 func main() { fmt.Println("hello world") }
 `
-	got := Run(src, 2*time.Second)
+	got := Run(src, "", 2*time.Second)
 	if got.ExitCode != 0 {
 		t.Fatalf("exit code: want 0, got %d, stderr=%q", got.ExitCode, got.Stderr)
 	}
@@ -27,7 +27,7 @@ func TestRun_Panic(t *testing.T) {
 	src := `package main
 func main() { panic("boom") }
 `
-	got := Run(src, 2*time.Second)
+	got := Run(src, "", 2*time.Second)
 	if got.ExitCode == 0 {
 		t.Fatalf("exit code: want non-zero, got 0")
 	}
@@ -40,7 +40,7 @@ func TestRun_Timeout(t *testing.T) {
 	src := `package main
 func main() { for {} }
 `
-	got := Run(src, 150*time.Millisecond)
+	got := Run(src, "", 150*time.Millisecond)
 	if got.ExitCode != 124 {
 		t.Fatalf("exit code: want 124, got %d", got.ExitCode)
 	}
@@ -57,7 +57,7 @@ func TestRun_DefaultTimeout(t *testing.T) {
 import "fmt"
 func main() { fmt.Print("ok") }
 `
-	got := Run(src, 0)
+	got := Run(src, "", 0)
 	if got.ExitCode != 0 {
 		t.Fatalf("default timeout should still run quick programs: exit=%d stderr=%q", got.ExitCode, got.Stderr)
 	}
@@ -70,12 +70,116 @@ func TestRun_CompileError(t *testing.T) {
 	src := `package main
 func main() { undeclared() }
 `
-	got := Run(src, time.Second)
+	got := Run(src, "", time.Second)
 	if got.ExitCode == 0 {
 		t.Fatalf("compile error should yield non-zero exit, got 0")
 	}
 	if got.Stderr == "" {
 		t.Fatalf("stderr: want non-empty, got empty")
+	}
+}
+
+func TestRun_BufioScannerStdin(t *testing.T) {
+	src := `package main
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+)
+
+func main() {
+	scanner := bufio.NewScanner(os.Stdin)
+	var count int
+	var sum float64
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		n, err := strconv.ParseFloat(line, 64)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "skipping %q: %v\n", line, err)
+			continue
+		}
+		count++
+		sum += n
+	}
+	fmt.Printf("count=%d\nsum=%.2f\n", count, sum)
+}
+`
+	stdin := "1.5\n2.5\nbad\n3\n"
+	got := Run(src, stdin, 2*time.Second)
+	if got.ExitCode != 0 {
+		t.Fatalf("exit code: want 0, got %d, stderr=%q", got.ExitCode, got.Stderr)
+	}
+	if !strings.Contains(got.Stdout, "count=3") {
+		t.Fatalf("stdout: want contains count=3, got %q", got.Stdout)
+	}
+	if !strings.Contains(got.Stdout, "sum=7.00") {
+		t.Fatalf("stdout: want contains sum=7.00, got %q", got.Stdout)
+	}
+	if !strings.Contains(got.Stderr, `skipping "bad"`) {
+		t.Fatalf("stderr: want skip notice for bad input, got %q", got.Stderr)
+	}
+}
+
+func TestRun_FmtScanStdin(t *testing.T) {
+	src := `package main
+
+import "fmt"
+
+func main() {
+	var name string
+	var age int
+	fmt.Scan(&name, &age)
+	fmt.Printf("hello %s, age %d\n", name, age)
+}
+`
+	got := Run(src, "ada 36\n", time.Second)
+	if got.ExitCode != 0 {
+		t.Fatalf("exit code: want 0, got %d, stderr=%q", got.ExitCode, got.Stderr)
+	}
+	if !strings.Contains(got.Stdout, "hello ada, age 36") {
+		t.Fatalf("stdout: want hello line, got %q", got.Stdout)
+	}
+}
+
+func TestRun_OsExitDeniedAtModule(t *testing.T) {
+	src := `package main
+
+import "os"
+
+func main() {
+	os.Exit(7)
+}
+`
+	got := Run(src, "", time.Second)
+	if got.ExitCode == 0 {
+		t.Fatalf("os.Exit should produce non-zero exit, got 0")
+	}
+	if !strings.Contains(got.Stderr, "os.Exit(7)") {
+		t.Fatalf("stderr: want os.Exit(7) trace, got %q", got.Stderr)
+	}
+}
+
+func TestRun_OsOpenIsTrimmed(t *testing.T) {
+	src := `package main
+
+import "os"
+
+func main() {
+	_, _ = os.Open("anything")
+}
+`
+	got := Run(src, "", time.Second)
+	if got.ExitCode == 0 {
+		t.Fatalf("os.Open should not be available; want non-zero exit, got 0")
+	}
+	if !strings.Contains(got.Stderr, "Open") {
+		t.Fatalf("stderr: want mention of Open, got %q", got.Stderr)
 	}
 }
 
@@ -91,7 +195,7 @@ func TestFail(t *testing.T) {
 	if 1+1 != 3 { t.Errorf("want 3, got %d", 1+1) }
 }
 `
-	got := RunTests(src, 2*time.Second)
+	got := RunTests(src, "", 2*time.Second)
 	if len(got.Passed) != 1 || got.Passed[0] != "TestPass" {
 		t.Fatalf("passed: want [TestPass], got %v", got.Passed)
 	}
@@ -111,7 +215,7 @@ func TestFatalStops(t *testing.T) {
 	t.Errorf("should not run")
 }
 `
-	got := RunTests(src, time.Second)
+	got := RunTests(src, "", time.Second)
 	if len(got.Failed) != 1 {
 		t.Fatalf("failed: want 1, got %d", len(got.Failed))
 	}
@@ -127,7 +231,7 @@ func TestPanics(t *testing.T) {
 	panic("deliberate")
 }
 `
-	got := RunTests(src, time.Second)
+	got := RunTests(src, "", time.Second)
 	if len(got.Failed) != 1 {
 		t.Fatalf("failed: want 1, got %d (passed=%v)", len(got.Failed), got.Passed)
 	}
@@ -143,7 +247,7 @@ func TestRunTests_NoneFound(t *testing.T) {
 	src := `package main
 func main() {}
 `
-	got := RunTests(src, time.Second)
+	got := RunTests(src, "", time.Second)
 	if len(got.Passed)+len(got.Failed) != 0 {
 		t.Fatalf("want no tests, got passed=%v failed=%v", got.Passed, got.Failed)
 	}
@@ -156,7 +260,7 @@ func TestRunTests_ParseError(t *testing.T) {
 	src := `package main
 func TestBroken(t *testing.T { }
 `
-	got := RunTests(src, time.Second)
+	got := RunTests(src, "", time.Second)
 	if got.Stderr == "" {
 		t.Fatalf("stderr: want parse error, got empty")
 	}
@@ -167,7 +271,7 @@ func TestRunTests_Timeout(t *testing.T) {
 import "testing"
 func TestSpin(t *testing.T) { for {} }
 `
-	got := RunTests(src, 120*time.Millisecond)
+	got := RunTests(src, "", 120*time.Millisecond)
 	if len(got.Failed) == 0 && !strings.Contains(got.Stderr, "timeout") {
 		t.Fatalf("want timeout signal, got failed=%v stderr=%q", got.Failed, got.Stderr)
 	}

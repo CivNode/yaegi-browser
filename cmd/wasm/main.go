@@ -37,16 +37,20 @@ func main() {
 	select {}
 }
 
-// runFunc expects (source string, timeoutMs number) and returns a Promise
-// that resolves to { stdout, stderr, exitCode, durationMs }.
+// runFunc expects (source string, stdin string, timeoutMs number) and
+// returns a Promise that resolves to
+// { stdout, stderr, exitCode, durationMs }. The stdin argument is
+// optional — older callers that pass (source, timeoutMs) still work
+// because parseStdin treats a number in slot 1 as the timeout.
 func runFunc(_ js.Value, args []js.Value) any {
 	if len(args) < 1 || args[0].Type() != js.TypeString {
-		return resolvedPromise(errorObject("run: expected (source string, timeoutMs number)"))
+		return resolvedPromise(errorObject("run: expected (source string, stdin string, timeoutMs number)"))
 	}
 	source := args[0].String()
-	timeout := parseTimeout(args, 1)
+	stdin, timeoutIdx := parseStdin(args, 1)
+	timeout := parseTimeout(args, timeoutIdx)
 	return newPromise(func() any {
-		res := yaegibrowser.Run(source, timeout)
+		res := yaegibrowser.Run(source, stdin, timeout)
 		return map[string]any{
 			"stdout":     res.Stdout,
 			"stderr":     res.Stderr,
@@ -56,17 +60,20 @@ func runFunc(_ js.Value, args []js.Value) any {
 	})
 }
 
-// runTestsFunc expects (source string, timeoutMs number) and returns a
-// Promise that resolves to { stdout, stderr, passed: [name],
-// failed: [{name, message}], durationMs }.
+// runTestsFunc expects (source string, stdin string, timeoutMs number)
+// and returns a Promise that resolves to
+// { stdout, stderr, passed: [name], failed: [{name, message}],
+// durationMs }. As with runFunc, the stdin argument is optional and the
+// older two-argument shape continues to work.
 func runTestsFunc(_ js.Value, args []js.Value) any {
 	if len(args) < 1 || args[0].Type() != js.TypeString {
-		return resolvedPromise(errorObject("runTests: expected (source string, timeoutMs number)"))
+		return resolvedPromise(errorObject("runTests: expected (source string, stdin string, timeoutMs number)"))
 	}
 	source := args[0].String()
-	timeout := parseTimeout(args, 1)
+	stdin, timeoutIdx := parseStdin(args, 1)
+	timeout := parseTimeout(args, timeoutIdx)
 	return newPromise(func() any {
-		res := yaegibrowser.RunTests(source, timeout)
+		res := yaegibrowser.RunTests(source, stdin, timeout)
 		passed := make([]any, len(res.Passed))
 		for i, name := range res.Passed {
 			passed[i] = name
@@ -120,6 +127,24 @@ func newPromise(fn func() any) js.Value {
 func resolvedPromise(v any) js.Value {
 	promise := js.Global().Get("Promise")
 	return promise.Call("resolve", v)
+}
+
+// parseStdin reads args[i] as a JS string of stdin bytes. The second
+// return value is the index where the timeout argument is expected
+// next — it advances past the stdin slot when one is present, or stays
+// at i when the slot is missing or holds a number (the legacy
+// two-argument shape where args[1] is the timeout). This keeps
+// (source, timeoutMs) calls working without an explicit empty-string
+// stdin argument.
+func parseStdin(args []js.Value, i int) (string, int) {
+	if len(args) <= i {
+		return "", i
+	}
+	v := args[i]
+	if v.Type() == js.TypeString {
+		return v.String(), i + 1
+	}
+	return "", i
 }
 
 // parseTimeout reads args[i] as a JS number of milliseconds and returns a

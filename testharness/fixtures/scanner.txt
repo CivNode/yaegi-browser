@@ -1,0 +1,29 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+)
+
+func main() {
+	scanner := bufio.NewScanner(os.Stdin)
+	var count int
+	var sum float64
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		n, err := strconv.ParseFloat(line, 64)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "skipping %q: %v\n", line, err)
+			continue
+		}
+		count++
+		sum += n
+	}
+	fmt.Printf("count=%d\nsum=%.2f\n", count, sum)
+}

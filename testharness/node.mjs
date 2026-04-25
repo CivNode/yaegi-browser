@@ -151,6 +151,24 @@ async function main() {
     }
   }
 
+  // Test 6: bufio.NewScanner reading os.Stdin from the JS-supplied stdin.
+  {
+    const src = await runFixture("scanner.txt");
+    const got = await api.run(src, "1.5\n2.5\nbad\n3\n", 5000);
+    if (assertEqual("scanner.exitCode", got.exitCode, 0)) {
+      assertContains("scanner.count", got.stdout, "count=3");
+      assertContains("scanner.sum", got.stdout, "sum=7.00");
+      assertContains("scanner.skip", got.stderr, "skipping \"bad\"");
+    }
+  }
+
+  // Test 7: legacy (source, timeoutMs) still works (no stdin slot).
+  {
+    const src = await runFixture("hello.txt");
+    const got = await api.run(src, 5000);
+    assertEqual("legacy.exitCode", got.exitCode, 0);
+  }
+
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed`);
     process.exit(1);

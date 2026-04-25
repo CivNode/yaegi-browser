@@ -8,8 +8,11 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
+	"os"
 	"reflect"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +20,18 @@ import (
 
 	"github.com/CivNode/yaegi-browser/internal/symbols"
 )
+
+// init asks Yaegi to treat the streams handed to it via interp.Options
+// as authoritative for os.Stdin / os.Stdout / os.Stderr inside
+// interpreted code. Without this flag Yaegi only rebinds those vars
+// when the supplied streams happen to be *os.File values backed by real
+// file descriptors — which is precisely what the browser's WASM runtime
+// does not have. Yaegi reads YAEGI_SPECIAL_STDIO once when interp.New
+// runs, so setting it here before any interpreter is constructed is
+// enough.
+func init() {
+	_ = os.Setenv("YAEGI_SPECIAL_STDIO", "true")
+}
 
 // YaegiVersion reports the version of github.com/traefik/yaegi that was
 // linked into this binary. It is populated lazily the first time it is
@@ -140,11 +155,19 @@ func (t *civT) Logf(format string, args ...any) {
 // whole RunTests run.
 var errFatalSentinel = errors.New("civT.Fatalf")
 
-// newInterpreter builds a yaegi interpreter wired up with stdlib symbols and
-// the testing.T override that RunTests relies on. Stdout and Stderr go to
-// the supplied buffers.
-func newInterpreter(stdout, stderr *bytes.Buffer) (*interp.Interpreter, error) {
+// newInterpreter builds a yaegi interpreter wired up with stdlib
+// symbols and the testing.T override that RunTests relies on. The
+// supplied stdin reader is exposed to interpreted code as os.Stdin once
+// Yaegi's fixStdlib pass runs (which it does as soon as the fmt/fmt
+// symbol table is loaded, since YAEGI_SPECIAL_STDIO is set in package
+// init). Stdout and Stderr capture interpreted output into the supplied
+// buffers.
+func newInterpreter(stdin io.Reader, stdout, stderr *bytes.Buffer) (*interp.Interpreter, error) {
+	if stdin == nil {
+		stdin = strings.NewReader("")
+	}
 	i := interp.New(interp.Options{
+		Stdin:  stdin,
 		Stdout: stdout,
 		Stderr: stderr,
 	})
@@ -162,12 +185,16 @@ func newInterpreter(stdout, stderr *bytes.Buffer) (*interp.Interpreter, error) {
 	return i, nil
 }
 
-// Run evaluates a complete "package main" Go program under Yaegi, capturing
-// stdout, stderr and an approximate exit code. ExitCode is 0 on success, 124
-// on timeout (matching the coreutils convention), and 1 for any other
-// interpreter error. Panics surface in Stderr and also produce a non-zero
-// ExitCode.
-func Run(source string, timeout time.Duration) (result RunResult) {
+// Run evaluates a complete "package main" Go program under Yaegi,
+// capturing stdout, stderr and an approximate exit code. The stdin
+// string is fed to interpreted code as the contents of os.Stdin —
+// programs that read with bufio.NewScanner(os.Stdin), fmt.Scan, or any
+// other io.Reader-backed call will see this data, then EOF.
+//
+// ExitCode is 0 on success, 124 on timeout (matching coreutils), and 1
+// for any other interpreter error. Panics surface in Stderr and also
+// produce a non-zero ExitCode.
+func Run(source, stdin string, timeout time.Duration) (result RunResult) {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
@@ -179,7 +206,7 @@ func Run(source string, timeout time.Duration) (result RunResult) {
 		result.DurationMs = time.Since(start).Milliseconds()
 	}()
 
-	i, err := newInterpreter(&stdout, &stderr)
+	i, err := newInterpreter(strings.NewReader(stdin), &stdout, &stderr)
 	if err != nil {
 		stderr.WriteString(err.Error())
 		result.ExitCode = 1
@@ -210,12 +237,14 @@ func Run(source string, timeout time.Duration) (result RunResult) {
 	return result
 }
 
-// RunTests parses source to discover func TestXxx(*testing.T) declarations,
-// then invokes each one under a civT stand-in. Tests that call Errorf,
-// Fatalf, or panic spontaneously land in Failed; the rest land in Passed.
-// stdout / stderr capture any fmt output that user code produced while the
-// tests ran. DurationMs measures the whole run, not individual tests.
-func RunTests(source string, timeout time.Duration) (result RunTestsResult) {
+// RunTests parses source to discover func TestXxx(*testing.T)
+// declarations, then invokes each one under a civT stand-in. Tests that
+// call Errorf, Fatalf, or panic spontaneously land in Failed; the rest
+// land in Passed. The stdin string feeds interpreted code's os.Stdin
+// for the rare test body that reads from it. stdout / stderr capture
+// any fmt output the test code produces. DurationMs measures the whole
+// run, not individual tests.
+func RunTests(source, stdin string, timeout time.Duration) (result RunTestsResult) {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
@@ -241,7 +270,7 @@ func RunTests(source string, timeout time.Duration) (result RunTestsResult) {
 		return result
 	}
 
-	i, err := newInterpreter(&stdout, &stderr)
+	i, err := newInterpreter(strings.NewReader(stdin), &stdout, &stderr)
 	if err != nil {
 		stderr.WriteString(err.Error())
 		return result
