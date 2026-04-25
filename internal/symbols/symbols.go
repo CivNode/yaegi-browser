@@ -1,7 +1,7 @@
 // Package symbols is a minimal Yaegi stdlib wrapper covering only the
 // packages that Training snippets actually need: fmt, strings, strconv,
 // errors, bytes, sort, math, unicode, unicode/utf8, io, time, bufio,
-// and a curated subset of os.
+// log/slog, and a curated subset of os.
 //
 // It exists because github.com/traefik/yaegi/stdlib registers every
 // standard library package via init() side effects — about 40 MB of
@@ -19,7 +19,7 @@ package symbols
 
 import "reflect"
 
-//go:generate yaegi extract -name symbols fmt strings strconv errors bytes sort math unicode unicode/utf8 io time bufio os
+//go:generate yaegi extract -name symbols fmt strings strconv errors bytes sort math unicode unicode/utf8 io time bufio log/slog os
 
 // Symbols is the Yaegi-style symbol map that each generated file
 // registers into from its init() function.
