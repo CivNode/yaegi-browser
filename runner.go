@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -231,7 +232,7 @@ func Run(source, stdin string, timeout time.Duration) (result RunResult) {
 		if stderr.Len() > 0 {
 			stderr.WriteString("\n")
 		}
-		stderr.WriteString(err.Error())
+		stderr.WriteString(rewriteEvalError(err))
 		result.ExitCode = 1
 	}
 	return result
@@ -291,7 +292,7 @@ func RunTests(source, stdin string, timeout time.Duration) (result RunTestsResul
 		if stderr.Len() > 0 {
 			stderr.WriteString("\n")
 		}
-		stderr.WriteString(err.Error())
+		stderr.WriteString(rewriteEvalError(err))
 		return result
 	}
 
@@ -434,4 +435,39 @@ func hasTestingTParam(ft *ast.FuncType) bool {
 		return false
 	}
 	return pkg.Name == "testing" && sel.Sel.Name == "T"
+}
+
+// missingPkgRE matches Yaegi's "unable to find source related to" error.
+// Yaegi raises it when an import path has no symbol entry in the registered
+// stdlib map. The full error usually looks like:
+//
+//	2:5: import "log/syslog" error: unable to find source related to: "log/syslog"
+var missingPkgRE = regexp.MustCompile(`unable to find source related to:\s*"([^"]+)"`)
+
+// rewriteEvalError makes Yaegi's import errors actionable. The default
+// message ("unable to find source related to: X") leaves the reader
+// guessing — they cannot tell whether the package name is wrong, the
+// import path is wrong, or the sandbox simply does not ship that
+// package. A short note pointing at the curated-stdlib reality is more
+// useful, especially for didactic snippets that were copied from
+// production code.
+func rewriteEvalError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	m := missingPkgRE.FindStringSubmatch(msg)
+	if m == nil {
+		return msg
+	}
+	pkg := m[1]
+	hint := fmt.Sprintf(
+		"%s\n\n"+
+			"Sandbox limitation: %q is not available in the in-browser Go interpreter.\n"+
+			"The sandbox ships a curated subset of the standard library that fits the wasm size budget;\n"+
+			"networking (net, net/http, database/sql), syscalls, plugins, and a handful of less common\n"+
+			"packages are not included. For unrestricted Go, use the full IDE.",
+		msg, pkg,
+	)
+	return hint
 }

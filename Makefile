@@ -18,19 +18,19 @@ tidy:
 # WASM build — produces dist/yaegi.wasm, copies wasm_exec.js out of GOROOT
 # so consumers never have to reach into it, and writes a release manifest.
 #
-# Size budget: 14 MB raw / ~3.5 MB gzipped. The Yaegi interpreter
+# Size budget: 22 MB raw / ~5.5 MB gzipped. The Yaegi interpreter
 # itself is about 10.5 MB compiled for js/wasm before any symbols are
-# registered; internal/symbols adds roughly 1.5 MB of curated wrappers
-# for fmt, strings, strconv, errors, bytes, sort, math, unicode, io,
-# time, bufio, and a trimmed os subset. Serving the asset with
-# Content-Encoding: gzip or brotli drops the wire size to about
-# 3.3 MB.
+# registered; internal/symbols adds roughly another 9 MB of wrappers
+# covering ~80 standard library packages — every pure-computation
+# package plus the playground-safe parts of os and io/fs. Serving the
+# asset with Content-Encoding: gzip or brotli drops the wire size to
+# about 5 MB; the browser caches it after the first load.
 #
 # MAX_WASM_BYTES below is the CI ceiling. Raise it here (and in any
 # external CI references) if you extend the curated symbol set further.
 VERSION        ?= dev
 BUILD_AT       := $(shell date -u +%FT%TZ)
-MAX_WASM_BYTES := 14680064
+MAX_WASM_BYTES := 23068672
 
 # Track every Go source file that influences the wasm build so `make wasm`
 # actually rebuilds when they change.

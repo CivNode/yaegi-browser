@@ -79,6 +79,23 @@ func main() { undeclared() }
 	}
 }
 
+func TestRun_MissingPackageHint(t *testing.T) {
+	src := `package main
+import "net/http"
+func main() { _ = http.Client{} }
+`
+	got := Run(src, "", time.Second)
+	if got.ExitCode == 0 {
+		t.Fatalf("missing package should yield non-zero exit, got 0")
+	}
+	if !strings.Contains(got.Stderr, "Sandbox limitation") {
+		t.Fatalf("stderr: want a 'Sandbox limitation' hint, got %q", got.Stderr)
+	}
+	if !strings.Contains(got.Stderr, "net/http") {
+		t.Fatalf("stderr: want the missing import path quoted, got %q", got.Stderr)
+	}
+}
+
 func TestRun_BufioScannerStdin(t *testing.T) {
 	src := `package main
 
